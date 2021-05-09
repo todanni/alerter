@@ -4,12 +4,10 @@ import (
 	"net/http"
 	"os"
 
-	"github.com/todanni/alerter/internal/service"
-
-	"github.com/todanni/alerter/internal/database"
-
 	log "github.com/sirupsen/logrus"
 	"github.com/todanni/alerter/internal/config"
+	"github.com/todanni/alerter/internal/queue"
+	"github.com/todanni/alerter/internal/service"
 )
 
 func main() {
@@ -20,7 +18,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	ch, err := database.Connect(cfg)
+	ch, err := queue.Connect(cfg)
 	if err != nil {
 		log.Error(err)
 		os.Exit(1)
@@ -78,12 +76,4 @@ func main() {
 
 	log.Printf(" [*] Waiting for messages. To exit press CTRL+C")
 	<-forever
-
-	//// Initialise router
-	//r := mux.NewRouter()
-	//// Create servers by passing DB connection and router
-	//service.NewTemplateService(repository.NewRepository(db), r)
-	//
-	//// Start the servers and listen
-	//log.Fatal(http.ListenAndServe(":8083", r))
 }
