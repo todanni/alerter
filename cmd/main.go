@@ -4,13 +4,12 @@ import (
 	"net/http"
 	"os"
 
-	"github.com/gorilla/mux"
+	"github.com/todanni/alerter/internal/service"
+
+	"github.com/todanni/alerter/internal/database"
+
 	log "github.com/sirupsen/logrus"
-	"github.com/todanni/template-repository/internal/config"
-	"github.com/todanni/template-repository/internal/database"
-	"github.com/todanni/template-repository/internal/repository"
-	"github.com/todanni/template-repository/internal/server"
-	"github.com/todanni/template-repository/pkg/template"
+	"github.com/todanni/alerter/internal/config"
 )
 
 func main() {
@@ -21,25 +20,70 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Open database connection
-	db, err := database.Open(cfg)
+	ch, err := database.Connect(cfg)
+	if err != nil {
+		log.Error(err)
+		os.Exit(1)
+	}
+	defer ch.Close()
+
+	q, err := ch.QueueDeclare(
+		"alerts",
+		false,
+		false,
+		false,
+		false,
+		nil,
+	)
 	if err != nil {
 		log.Error(err)
 		os.Exit(1)
 	}
 
-	// Perform any migrations needed to run the service
-	err = db.AutoMigrate(&template.Template{})
+	msgs, err := ch.Consume(
+		q.Name,
+		"",
+		true,
+		false,
+		false,
+		false,
+		nil,
+	)
 	if err != nil {
 		log.Error(err)
+		os.Exit(1)
 	}
 
-	// Initialise router
-	r := mux.NewRouter()
+	s := service.NewAlerterService(cfg, http.Client{})
 
-	// Create servers by passing DB connection and router
-	server.NewTemplateService(repository.NewRepository(db), r)
+	forever := make(chan bool)
 
-	// Start the servers and listen
-	log.Fatal(http.ListenAndServe(":8083", r))
+	go func() {
+		for d := range msgs {
+			log.Printf("Received a message: %s", d.Body)
+			switch string(d.Body) {
+			case "login":
+				err = s.SendLoginAlert()
+			case "register":
+				err = s.SendRegisterAlert()
+			case "verified":
+				err = s.SendActivationAlert()
+			}
+			if err != nil {
+				log.Error(err)
+			}
+
+		}
+	}()
+
+	log.Printf(" [*] Waiting for messages. To exit press CTRL+C")
+	<-forever
+
+	//// Initialise router
+	//r := mux.NewRouter()
+	//// Create servers by passing DB connection and router
+	//service.NewTemplateService(repository.NewRepository(db), r)
+	//
+	//// Start the servers and listen
+	//log.Fatal(http.ListenAndServe(":8083", r))
 }
