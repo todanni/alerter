@@ -3,27 +3,85 @@ package service
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"io/ioutil"
 	"log"
 	"net/http"
 
+	"github.com/streadway/amqp"
 	"github.com/todanni/alerter/internal/config"
 	"github.com/todanni/alerter/pkg/alerter"
+	"github.com/todanni/alerts"
 )
 
-func NewAlerterService(cfg config.Config, client http.Client) alerter.Service {
+func NewAlerterService(cfg config.Config, client http.Client, ch *amqp.Channel) alerter.Service {
 	return &alerterService{
-		cfg:    cfg,
-		client: &client,
+		cfg:     cfg,
+		client:  &client,
+		channel: ch,
 	}
 }
 
 type alerterService struct {
-	client *http.Client
-	cfg    config.Config
+	client  *http.Client
+	channel *amqp.Channel
+	cfg     config.Config
 }
 
-func (s *alerterService) SendLoginAlert() error {
+func (s *alerterService) Run() error {
+	q, err := s.channel.QueueDeclare("alerts",
+		false,
+		false,
+		false,
+		false,
+		nil,
+	)
+	if err != nil {
+		log.Print(err)
+	}
+
+	msgs, err := s.channel.Consume(
+		q.Name,
+		"",
+		true,
+		false,
+		false,
+		false,
+		nil,
+	)
+	if err != nil {
+		log.Print(err)
+	}
+
+	for m := range msgs {
+		err = s.resolveAlert(m.Body)
+		if err != nil {
+			log.Print(err)
+		}
+	}
+	return nil
+}
+
+func (s *alerterService) resolveAlert(alertBytes []byte) error {
+	var al alerts.Alert
+	err := json.Unmarshal(alertBytes, &al)
+	if err != nil {
+		return err
+	}
+
+	switch al.Type {
+	case "login":
+		return s.sendLoginAlert()
+	case "register":
+		return s.sendRegisterAlert()
+	case "verify":
+		return s.sendActivationAlert()
+	default:
+		return errors.New("unknown alert type")
+	}
+}
+
+func (s *alerterService) sendLoginAlert() error {
 	// TODO: get public details for user
 	message := alerter.Message{
 		Embed: []*alerter.MessageEmbed{{
@@ -38,7 +96,7 @@ func (s *alerterService) SendLoginAlert() error {
 	return s.sendMessage(message, s.cfg.DiscordLoginHook)
 }
 
-func (s *alerterService) SendRegisterAlert() error {
+func (s *alerterService) sendRegisterAlert() error {
 	message := alerter.Message{
 		Embed: []*alerter.MessageEmbed{{
 			Title:       "New register request received",
@@ -49,7 +107,7 @@ func (s *alerterService) SendRegisterAlert() error {
 	return s.sendMessage(message, s.cfg.DiscordRegisterHook)
 }
 
-func (s *alerterService) SendActivationAlert() error {
+func (s *alerterService) sendActivationAlert() error {
 	// TODO: get public details for user
 	message := alerter.Message{
 		Embed: []*alerter.MessageEmbed{{
@@ -80,6 +138,7 @@ func (s *alerterService) sendMessage(message alerter.Message, hook string) error
 	if err != nil {
 		return err
 	}
-	log.Print(string(body))
+	_ = body
+	//log.Print(string(body))
 	return nil
 }
