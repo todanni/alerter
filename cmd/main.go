@@ -18,6 +18,7 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Connect to RabbitMQ and get a channel
 	ch, err := queue.Connect(cfg)
 	if err != nil {
 		log.Error(err)
